@@ -1,12 +1,18 @@
-import pandas as pd
-import numpy as np
+
 from itertools import product
 from os import path
+from datetime import date
+import pandas as pd
+import numpy as np
 
 from sklearn.preprocessing import LabelEncoder
+from src.feature_engeering import *
 
 BASE_PATH = '/Users/deepudilip/ML/Coursera/HowToWinDSCompeition/KagglePredictFutureSales'
 DATA_PATH = path.join(BASE_PATH, 'data/')
+PROCESSED_DATA_PATH = path.join(DATA_PATH, 'prepared_data/')
+RESTART_PATH = path.join(DATA_PATH, 'restarts/')
+
 
 def preprocess_shops_df(shops_df):
     """
@@ -42,7 +48,7 @@ def preprocess_categories_df(item_cat_df):
     item_cat_df['item_sub_type'] = item_cat_df['split'].apply(lambda x: x[1].strip() if len(x) > 1 else x[0])
 
     item_cat_df['item_type_id'] = LabelEncoder().fit_transform(item_cat_df['item_type'])
-    item_cat_df['item_sub_type_id'] = LabelEncoder.fit_transform(item_cat_df['item_sub_type'])
+    item_cat_df['item_sub_type_id'] = LabelEncoder().fit_transform(item_cat_df['item_sub_type'])
     item_cat_df = item_cat_df[['item_category_id', 'item_type_id', 'item_sub_type_id']]
 
     item_cat_df['item_category_id'] = item_cat_df['item_category_id'].astype(np.int16)
@@ -59,7 +65,7 @@ def preprocess_item_df(item_df):
     :return:
     """
     item_df = item_df.drop(['item_name'], axis=1)
-    item_df['item_id'] = item_df['item_id'].astypy(np.int16)
+    item_df['item_id'] = item_df['item_id'].astype(np.int16)
 
     return item_df
 
@@ -89,6 +95,7 @@ def prepare_train_df(sales_train_df, train_months=34):
     """
     :todo add docu
     :param sales_train_df:
+    :param train_months:
     :return:
     """
     data_matrix = []
@@ -119,31 +126,58 @@ def prepare_train_df(sales_train_df, train_months=34):
 
     return data_matrix
 
-def set_data_types(df, col_types_dict):
-    """
-    Convenience function to set data types of a set of columns in the dataframe as per the definition provided in the
-    input parameter col_types_dict.
 
-    :param df: Dataframe with the columns for which data types need to be altered.
-    :type df: pandas.DataFrame
-    :param col_types_dict: A dictionary with keys as the column names and the values as the datatype. Allowed values for
-                           datatypes are 'int16', 'int32', 'float'.
-    :return: Dataframe with the data types of the column changed.
+def write_prepared_data(train_df, valid_df, test_df):
     """
-    pass
-
-
-def main():
-    """
-    Main method to run the preprocessing steps
+    Convenience method to write pre-processed train and test data to disk, with appropriate names
+    :param train_df:
+    :param test_df:
     :return:
     """
+    feature_count_train = len(train_df.columns) - 2
+    feature_count_test = len(test_df.columns) - 1
 
-    item_cat_df = pd.read_csv(path.join(DATA_PATH, 'item_categories.csv'))
-    item_df = pd.read_csv(path.join(DATA_PATH, 'items.csv'))
-    sales_train_df = pd.read_csv(path.join(DATA_PATH, 'sales_train.csv'))
-    shops_df = pd.read_csv(path.join(DATA_PATH, 'shops.csv'))
-    test_df = pd.read_csv(path.join(DATA_PATH, 'test.csv'))
+    if feature_count_train != feature_count_test:
+        print('Error: unequal count of features in train and test set ')
+        train_df.to_pickle(PROCESSED_DATA_PATH, 'train_df_temp.pkl')
+        test_df.to_pickle(PROCESSED_DATA_PATH, 'test_df_temp.pkl')
+        return False
+
+    file_name_postfix = str(date.today()) + '.pkl'
+    train_file_name = 'train_df_' + str(feature_count_train) + '_features_' + file_name_postfix
+    valid_file_name = 'valid_df_' + str(feature_count_train) + '_features_' + file_name_postfix
+    test_file_name = 'test_df' + str(feature_count_test) + '_features_' + file_name_postfix
+
+    train_df.to_pickle(PROCESSED_DATA_PATH, train_file_name)
+    valid_df.to_pickle(PROCESSED_DATA_PATH, valid_file_name)
+    test_df.to_pickle(PROCESSED_DATA_PATH, test_file_name)
+
+    return True
+
+
+def read_all_data(data_base_path,
+                  sales_file='sales_train.csv',
+                  items_file='items.csv',
+                  item_categories_file='item_categories.csv',
+                  shops_file='shops.csv',
+                  test_file='test.csv'):
+
+    sales_train_df = pd.read_csv(path.join(data_base_path, sales_file))
+    item_df = pd.read_csv(path.join(data_base_path, items_file))
+    item_cat_df = pd.read_csv(path.join(data_base_path, item_categories_file))
+    shops_df = pd.read_csv(path.join(data_base_path, shops_file))
+    test_df = pd.read_csv(path.join(data_base_path, test_file))
+
+    dataframes = {'sales': sales_train_df,
+                  'items': item_df,
+                  'item_categories': item_cat_df,
+                  'shops': shops_df,
+                  'test': test_df}
+
+    return dataframes
+
+
+def merge_dataframes(sales_train_df, item_df, item_cat_df, shops_df, test_df):
 
     shops_df = preprocess_shops_df(shops_df)
     item_cat_df = preprocess_categories_df(item_cat_df)
@@ -158,11 +192,157 @@ def main():
     test_df = test_df.merge(item_df, on='item_id', how='left')
     test_df = test_df.merge(item_cat_df, on='item_category_id', how='left')
 
+    # train_df['is_train'] = 1
+    # test_df['is_train'] = 0
 
+    combined_df = pd.concat([train_df, test_df])
+
+    return combined_df
+
+
+def read_restart(step, filename='preprocessed_data'):
+    print('reading intermediate dataframe after step ' + str(step))
+    if step == 0:
+        return pd.DataFrame()
+
+    restart_path = path.join(RESTART_PATH, filename + '_step_' + str(step) + '.pkl')
+    if not path.exists(restart_path):
+        print('Error, no file found. Please check input file name or create the requested restarts')
+        return pd.DataFrame()
+
+    combined_df = pd.read_pickle(restart_path)
+    return combined_df
+
+
+def write_restart(data, step, filename='preprocessed_data'):
+    print('writing intermediate dataframe after step ' + str(step))
+    write_path = path.join(RESTART_PATH, filename + '_step_' + str(step) + '.pkl')
+    data.to_pickle(write_path)
+    return
+
+
+def precheck_for_run_step(data, run_step_no, read_step):
+
+    if data.empty:
+        print('Error: No data to perform requested step. Exiting')
+        return False
+    if run_step_no <= read_step:
+        print('Error: Trying to repeat previously run step. Exiting')
+        return False
+    return True
+
+
+def main(run_config):
+    """
+    Main method to run the preprocessing steps
+    :return:
+    """
+    read_step = run_config.get('read_step', 0)
+
+    run_step_1 = run_config.get('run_step_1', True)
+    run_step_2 = run_config.get('run_step_2', True)
+    run_step_3 = run_config.get('run_step_3', True)
+    run_step_4 = run_config.get('run_step_4', True)
+    run_step_5 = run_config.get('run_step_5', True)
+
+    write_step_1 = run_config.get('write_step_1', False)
+    write_step_2 = run_config.get('write_step_2', False)
+    write_step_3 = run_config.get('write_step_3', False)
+    write_step_4 = run_config.get('write_step_4', False)
+    write_step_5 = run_config.get('write_step_5', False)
+
+    all_data = read_all_data(DATA_PATH)
+
+    preprocessed_data = read_restart(read_step)
+
+    if preprocessed_data.empty:
+        run_step_1 = run_step_2 = run_step_3 = run_step_4 = run_step_5 = True
+
+    if run_step_1:
+        print('running step 1')
+        sales_train_df = all_data.get('sales')
+        item_df = all_data.get('items')
+        item_cat_df = all_data.get('item_categories')
+        shops_df = all_data.get('shops')
+        test_df = all_data.get('test')
+
+        preprocessed_data = merge_dataframes(sales_train_df, item_df, item_cat_df, shops_df, test_df)
+
+        if write_step_1:
+            write_restart(preprocessed_data, 1)
+
+    if run_step_2:
+        print('running step 2')
+        if not precheck_for_run_step(preprocessed_data, 2, read_step):
+            return False
+
+        # create  mean encoded features
+        print('creating mean encoded features')
+        preprocessed_data = create_mean_encoded_features(preprocessed_data)
+
+        if write_step_2:
+            write_restart(preprocessed_data, 2)
+
+    # create price trend features
+    if run_step_3:
+        print('running step 3')
+        if not precheck_for_run_step(preprocessed_data, 3, read_step):
+            return False
+
+        print('creating price trend features')
+        sales_train_df = all_data.get('sales')
+        preprocessed_data = create_item_price_trend_features(preprocessed_data, sales_train_df)
+        if write_step_3:
+            write_restart(preprocessed_data, 3)
+
+    # create features based on shop revenue trend
+    if run_step_4:
+        print('running step 4')
+        if not precheck_for_run_step(preprocessed_data, 4, read_step):
+            return False
+
+        print('creating shop revenue trend features')
+        sales_train_df = all_data.get('sales')
+        preprocessed_data = create_shop_revenue_trend_features(preprocessed_data, sales_train_df)
+        if write_step_4:
+            write_restart(preprocessed_data, 4)
+
+    # crate special features
+    if run_step_5:
+        print('running step 5')
+        if not precheck_for_run_step(preprocessed_data, 5, read_step):
+            return False
+
+        print('creating special features')
+        preprocessed_data = create_special_features(preprocessed_data)
+        if write_step_5:
+            write_restart(preprocessed_data, 5)
+
+    # step tp clean data
+
+    # train data
+    # train_data = preprocessed_data[(preprocessed_data['date_block_num'] > 11) &
+    #                              (preprocessed_data['date_block_num'] < 33)]
+    # valid_data = preprocessed_data[preprocessed_data['date_block_num'] == 33]
+    # test_data = preprocessed_data[preprocessed_data['date_block_num'] == 34]
+    #
+    # print('writing output')
+    # write_prepared_data(train_data, valid_data, test_df)
 
 
 if __name__ == '__main__':
-    main()
+    run_config = {'read_step': 0,
+                  'run_step_1': True,
+                  'run_step_2': True,
+                  'run_step_3': True,
+                  'run_step_4': True,
+                  'run_step_5': True,
+                  'write_step_1': True,
+                  'write_step_2': True,
+                  'write_step_3': True,
+                  'write_step_4': True,
+                  'write_step_5': True}
+    main(run_config)
 
 
 
